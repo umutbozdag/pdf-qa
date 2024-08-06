@@ -1,1 +1,1 @@
-from .pdf_qa import pdf_qa
+from .pdf_qa import main

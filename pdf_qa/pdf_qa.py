@@ -2,6 +2,7 @@ import os
 import json
 import getpass
 import argparse
+import pickle
 from langchain_community.document_loaders import OnlinePDFLoader, PyPDFLoader
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_anthropic import ChatAnthropic
@@ -11,10 +12,14 @@ from langchain_community.vectorstores import Chroma
 from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_community.chat_message_histories import ChatMessageHistory
+from langchain_core.chat_history import BaseChatMessageHistory
+from langchain_core.runnables.history import RunnableWithMessageHistory
 import requests
 import tempfile
 
 CONFIG_FILE = 'api_keys.json'
+HISTORY_DIR = 'chat_histories'
 
 def load_api_keys():
     if os.path.exists(CONFIG_FILE):
@@ -51,10 +56,9 @@ def select_llm(llm_choice):
         exit()
 
 def load_pdf(path_or_url):
-    try:
-        if path_or_url.startswith("http://") or path_or_url.startswith("https://"):
-            response = requests.get(path_or_url)
-            response.raise_for_status()
+    if path_or_url.startswith("http://") or path_or_url.startswith("https://"):
+        response = requests.get(path_or_url)
+        if response.status_code == 200:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
                 temp_file.write(response.content)
                 temp_file_path = temp_file.name
@@ -63,66 +67,40 @@ def load_pdf(path_or_url):
             os.unlink(temp_file_path)
             return docs
         else:
-            loader = PyPDFLoader(path_or_url)
-            return loader.load()
-    except Exception as e:
-        print(f"Error loading PDF: {str(e)}")
-        return None
-
-def pdf_qa(pdf_path, llm_choice="openai", question=None):
-    llm = select_llm(llm_choice)
-    docs = load_pdf(pdf_path)
-    
-    if not docs:
-        print("Failed to load the PDF. Please check the file or URL.")
-        return
-
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    splits = text_splitter.split_documents(docs)
-
-    if not splits:
-        print("No text was extracted from the PDF. Please check the file content.")
-        return
-
-    openai_api_key = get_api_key("openai")
-    embedding_function = OpenAIEmbeddings(openai_api_key=openai_api_key)
-    vectorstore = Chroma.from_documents(documents=splits, embedding=embedding_function)
-
-    retriever = vectorstore.as_retriever()
-
-    system_prompt = """
-    You are an assistant for question-answering tasks. 
-    Use the following pieces of retrieved context to answer 
-    the question. If you don't know the answer, say that you 
-    don't know. Use three sentences maximum and keep the 
-    answer concise.
-
-    {context}
-    """
-
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", system_prompt),
-            ("human", "{input}"),
-        ]
-    )
-
-    question_answer_chain = create_stuff_documents_chain(llm, prompt)
-    rag_chain = create_retrieval_chain(retriever, question_answer_chain)
-
-    print("PDF loaded successfully. You can now ask questions.")
-    if question:
-        response = rag_chain.invoke({"input": question})
-        answer = response.get("answer", "Sorry, I couldn't generate an answer.")
-        print(f"Answer: {answer}")
+            print(f"Failed to download PDF. Status code: {response.status_code}")
+            return None
     else:
-        while True:
-            question = input("Ask a question (or type 'exit' to quit): ")
-            if question.lower() == 'exit':
-                break
-            response = rag_chain.invoke({"input": question})
-            answer = response.get("answer", "Sorry, I couldn't generate an answer.")
-            print(f"Answer: {answer}\n")
+        loader = PyPDFLoader(path_or_url)
+        return loader.load()
+
+def load_chat_history(session_id: str) -> ChatMessageHistory:
+    os.makedirs(HISTORY_DIR, exist_ok=True)
+    history_file = os.path.join(HISTORY_DIR, f"{session_id}.pkl")
+    if os.path.exists(history_file):
+        with open(history_file, 'rb') as f:
+            return pickle.load(f)
+    return ChatMessageHistory()
+
+def save_chat_history(session_id: str, history: ChatMessageHistory):
+    os.makedirs(HISTORY_DIR, exist_ok=True)
+    history_file = os.path.join(HISTORY_DIR, f"{session_id}.pkl")
+    with open(history_file, 'wb') as f:
+        pickle.dump(history, f)
+
+def display_chat_history(history: ChatMessageHistory):
+    messages = history.messages
+    if messages:
+        print("Previous conversation:")
+        displayed_messages = []
+        for msg in messages:
+            role = "Human" if msg.type == "human" else "AI"
+            message = f"{role}: {msg.content}"
+            if message not in displayed_messages:
+                print(message)
+                displayed_messages.append(message)
+        print("\n")
+    else:
+        print("No previous conversation found.\n")
 
 def main():
     parser = argparse.ArgumentParser(description="PDF Question Answering CLI")
@@ -132,8 +110,9 @@ def main():
     args = parser.parse_args()
 
     llm = select_llm(args.llm)
+
     docs = load_pdf(args.pdf_path)
-    
+
     if not docs:
         print("Failed to load the PDF. Please check the file or URL.")
         return
@@ -151,40 +130,62 @@ def main():
 
     retriever = vectorstore.as_retriever()
 
-    system_prompt = """
-    You are an assistant for question-answering tasks. 
-    Use the following pieces of retrieved context to answer 
-    the question. If you don't know the answer, say that you 
-    don't know. Use three sentences maximum and keep the 
-    answer concise.
-
-    {context}
-    """
-
     prompt = ChatPromptTemplate.from_messages(
         [
-            ("system", system_prompt),
+        ("system", "You are an assistant for question-answering tasks. Use the following pieces of retrieved context to answer the question. If asked about previous questions or conversation history, refer ONLY to the chat history provided. If you don't know the answer or if the information is not in the context or chat history, say that you don't know. Use three sentences maximum and keep the answer concise.\n\nContext: {context}\n\nChat History: {chat_history}"),
             ("human", "{input}"),
         ]
     )
 
     question_answer_chain = create_stuff_documents_chain(llm, prompt)
     rag_chain = create_retrieval_chain(retriever, question_answer_chain)
-    
+
+    pdf_name = os.path.basename(args.pdf_path)
+    session_id = f"session_{pdf_name}"
+
+    chat_history = load_chat_history(session_id)
+
     print("PDF loaded successfully. You can now ask questions.")
-    
+    display_chat_history(chat_history)
+
+    def get_session_history(session_id: str) -> BaseChatMessageHistory:
+        nonlocal chat_history
+        return chat_history
+
+    conversational_rag_chain = RunnableWithMessageHistory(
+        rag_chain,
+        get_session_history,
+        input_messages_key="input",
+        history_messages_key="chat_history",
+        output_messages_key="answer",
+    )
+
     if args.question:
-        response = rag_chain.invoke({"input": args.question})
+        response = conversational_rag_chain.invoke(
+            {"input": args.question},
+            config={"configurable": {"session_id": session_id}}
+        )
         answer = response.get("answer", "Sorry, I couldn't generate an answer.")
         print(f"Answer: {answer}")
+        chat_history.add_user_message(args.question)
+        chat_history.add_ai_message(answer)
+        save_chat_history(session_id, chat_history)
     else:
         while True:
             question = input("Ask a question (or type 'exit' to quit): ")
             if question.lower() == 'exit':
                 break
-            response = rag_chain.invoke({"input": question})
+            response = conversational_rag_chain.invoke(
+                {"input": question},
+                config={"configurable": {"session_id": session_id}}
+            )
             answer = response.get("answer", "Sorry, I couldn't generate an answer.")
             print(f"Answer: {answer}\n")
+            chat_history.add_user_message(question)
+            chat_history.add_ai_message(answer)
+            save_chat_history(session_id, chat_history)
+
+    print(f"Chat history saved to {os.path.join(HISTORY_DIR, f'{session_id}.pkl')}")
 
 if __name__ == "__main__":
     main()
