@@ -50,7 +50,7 @@ def select_llm(llm_choice):
         return ChatAnthropic(api_key=api_key)
     elif llm_choice == "google":
         api_key = get_api_key("google")
-        return ChatGoogleGenerativeAI(api_key=api_key)
+        return ChatGoogleGenerativeAI(api_key=api_key, model="gemini-pro")
     else:
         print("Invalid LLM choice. Exiting.")
         exit()
