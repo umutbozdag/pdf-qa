@@ -1,0 +1,2 @@
+[console_scripts]
+pdf_qa = pdf_qa.pdf_qa:main

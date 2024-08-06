@@ -1,0 +1,9 @@
+README.md
+setup.py
+pdf_qa/__init__.py
+pdf_qa/pdf_qa.py
+pdf_qa.egg-info/PKG-INFO
+pdf_qa.egg-info/SOURCES.txt
+pdf_qa.egg-info/dependency_links.txt
+pdf_qa.egg-info/entry_points.txt
+pdf_qa.egg-info/top_level.txt
