@@ -1,9 +1,0 @@
-api_keys.json
-chat_histories/*.pkl
-dist
-build
-*.egg-info
-.DS_Store
-__pycache__
-.vscode
-.idea
