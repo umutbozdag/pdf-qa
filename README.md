@@ -13,16 +13,13 @@ PDF QA is a command-line tool that allows you to ask questions about the content
 
 You can install PDF QA using pip:
 
-bash
 pip install pdf_qa
 
 ## Usage
 
 To use PDF QA, run the following command:
 
-bash
 pdf_qa <pdf_path_or_url> [options]
-
 
 ### Options
 
