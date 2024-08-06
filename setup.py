@@ -8,7 +8,7 @@ with open("requirements.txt", "r", encoding="utf-8") as fh:
 
 setup(
     name="pdf_qa",
-    version="0.1.9",
+    version="0.1.10",
     author="Umut",
     author_email="contact@umutbozdag.com",
     description="A PDF question answering tool using various LLMs",
